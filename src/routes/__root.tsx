@@ -11,6 +11,7 @@ import {
 import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
+import { reportLovableError } from "../lib/lovable-error-reporting";
 import { Toaster } from "@/components/ui/sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Preloader } from "@/components/site/preloader";
@@ -62,6 +63,9 @@ function NotFoundComponent() {
 function ErrorComponent({ error, reset }: ErrorComponentProps) {
   console.error(error);
   const router = useRouter();
+  useEffect(() => {
+    reportLovableError(error, { boundary: "tanstack_root_error_component" });
+  }, [error]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -122,7 +126,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       {
         src: "https://cloud.umami.is/script.js",
         defer: true,
-        "data-website-id": "11dd5a6d-4deb-49f5-93e3-9135178ff6b9",
+        "data-website-id": "eaa9c897-a7a0-4b59-9fab-fd655977e2c1",
       },
     ],
   }),
