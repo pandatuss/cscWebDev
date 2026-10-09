@@ -66,7 +66,15 @@ function HomePage() {
   const upcomingEvents = (events.data ?? [])
     .filter((item) => item.event_status === "upcoming" || item.event_status === "ongoing")
     .slice(0, 3);
-  const previewOfficers = (officers.data ?? []).slice(0, 4);
+  const allOfficers = officers.data ?? [];
+  const latestYear = allOfficers
+    .map((item) => item.academic_year)
+    .filter((year): year is string => !!year)
+    .sort()
+    .at(-1);
+  const previewOfficers = allOfficers
+    .filter((item) => !latestYear || item.academic_year === latestYear)
+    .slice(0, 4);
 
   return (
     <PublicShell>
