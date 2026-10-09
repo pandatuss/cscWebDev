@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { applyChange, entityLabel } from "@/lib/change-requests";
 import { ScheduleIndicator } from "@/lib/schedule";
 import { logAction } from "@/hooks/use-csc-auth";
+import { approveSuperAdminDemotion } from "@/lib/admin.functions";
 import { ConfirmAction } from "@/components/admin/controls";
 import {
   ChangeHistory,
@@ -81,6 +82,16 @@ function ApprovalsPage() {
   async function decide(item: PendingChange, decision: "approved" | "rejected" | "revision_requested", message?: string) {
     setBusy(item.id);
     try {
+      if (item.table_name === "user_roles" && decision === "approved") {
+        try {
+          await approveSuperAdminDemotion({ data: { changeId: item.id } });
+          toast.success("Demotion approved.");
+          void queryClient.invalidateQueries();
+        } catch (caught) {
+          toast.error(caught instanceof Error ? caught.message : "Could not approve.");
+        }
+        return;
+      }
       if (decision === "approved") {
         const { error } = await applyChange(item.table_name, item.action, item.record_id, item.payload);
         if (error) return void toast.error(error.message);

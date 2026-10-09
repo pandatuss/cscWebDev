@@ -7,6 +7,7 @@ const ENTITY: Record<string, string> = {
   events: "event",
   transparency_documents: "document",
   organization_settings: "page-content",
+  user_roles: "administrator role",
 };
 export const entityLabel = (t: string) => ENTITY[t] ?? t;
 
@@ -14,7 +15,8 @@ export type ChangeTable =
   | "announcements"
   | "events"
   | "transparency_documents"
-  | "organization_settings";
+  | "organization_settings"
+  | "user_roles";
 export type ChangeAction = "create" | "update" | "delete";
 
 type Result = { error: { message: string } | null; pending: boolean };

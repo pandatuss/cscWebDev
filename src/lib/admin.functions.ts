@@ -2,22 +2,39 @@ import { callerIsStaff, callerIsSuperAdmin } from "@/lib/access";
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
+const OWNER_EMAIL = "carljustin.juntilla@cvsu.edu.ph";
+
+async function assertNotOwner(userId: string) {
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { data } = await supabaseAdmin.from("profiles").select("email").eq("id", userId).maybeSingle();
+  if (data?.email?.toLowerCase() === OWNER_EMAIL) throw new Error("This account is protected and cannot be changed.");
+}
+
 export const bootstrapFirstAdmin = createServerFn({ method: "POST" })
-  .inputValidator((input: { email: string; password: string; fullName: string }) => {
+  .inputValidator((input: { email: string; password: string; fullName: string; setupKey: string }) => {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.email)) throw new Error("Invalid email.");
     if (input.password.length < 10)
       throw new Error("Password must be at least 10 characters.");
     if (input.password.length > 128 || input.email.length > 254 || (input.fullName ?? "").length > 120)
       throw new Error("Input is too long.");
+    if (typeof input.setupKey !== "string" || input.setupKey.length > 256)
+      throw new Error("Invalid setup key.");
     return input;
   })
   .handler(async ({ data }) => {
+    const expected = process.env["INITIAL_ADMIN_SETUP_SECRET"];
+    if (!expected) throw new Error("Setup is disabled.");
+    const { timingSafeEqual } = await import("crypto");
+    const a = Buffer.from(data.setupKey);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) throw new Error("Invalid setup key.");
+
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     const { count, error: countError } = await supabaseAdmin
       .from("user_roles")
       .select("id", { count: "exact", head: true });
-    if (countError) throw new Error(countError.message);
+    if (countError) throw new Error("Setup check failed.");
     if ((count ?? 0) > 0) throw new Error("Setup has already been completed.");
 
     const { data: created, error } = await supabaseAdmin.auth.admin.createUser({
@@ -124,8 +141,16 @@ export const updateAdminUser = createServerFn({ method: "POST" })
     if (data.userId === context.userId && (data.disabled || data.role === "admin")) {
       throw new Error("You cannot remove your own super administrator access.");
     }
+    await assertNotOwner(data.userId);
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    if (data.role === "admin") {
+      const { data: current } = await supabaseAdmin
+        .from("user_roles").select("role").eq("user_id", data.userId).maybeSingle();
+      if (current?.role === "super_admin")
+        throw new Error("Demoting a super administrator needs approval from another super administrator.");
+    }
 
     if (typeof data.disabled === "boolean") {
       const { error } = await supabaseAdmin
@@ -216,6 +241,7 @@ export const listAdminUsers = createServerFn({ method: "GET" })
         disabled: profile?.is_disabled ?? false,
         trialUntil: row.role === "admin" ? trialUntil : null,
         isSelf: row.user_id === context.userId,
+        isOwner: profile?.email?.toLowerCase() === OWNER_EMAIL,
       };
     });
   });
@@ -235,6 +261,7 @@ export const grantSuperAdminTrial = createServerFn({ method: "POST" })
     if (!(await callerIsSuperAdmin(context.supabase)))
       throw new Error("Only super administrators can do this.");
     if (data.userId === context.userId) throw new Error("You cannot give a trial to yourself.");
+    await assertNotOwner(data.userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: role } = await supabaseAdmin
       .from("user_roles").select("role").eq("user_id", data.userId).maybeSingle();
@@ -262,6 +289,7 @@ export const deleteAdminUser = createServerFn({ method: "POST" })
       throw new Error("Only super administrators can do this.");
     if (data.userId === context.userId)
       throw new Error("You cannot remove your own account.");
+    await assertNotOwner(data.userId);
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: target } = await supabaseAdmin
@@ -294,11 +322,82 @@ export const endSuperAdminTrial = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     if (!(await callerIsSuperAdmin(context.supabase)))
       throw new Error("Only super administrators can do this.");
+    await assertNotOwner(data.userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { error } = await supabaseAdmin.from("super_admin_trials").delete().eq("user_id", data.userId);
     if (error) throw new Error(error.message);
     await supabaseAdmin.from("audit_logs").insert({
       user_id: context.userId, action: "end_trial", entity_type: "administrator", entity_id: data.userId,
+    });
+    return { ok: true };
+  });
+
+export const requestSuperAdminDemotion = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { userId: string }) => {
+    if (!/^[0-9a-f-]{36}$/i.test(input.userId ?? "")) throw new Error("Missing administrator.");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    if (!(await callerIsSuperAdmin(context.supabase)))
+      throw new Error("Only super administrators can do this.");
+    if (data.userId === context.userId) throw new Error("You cannot demote yourself.");
+    await assertNotOwner(data.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: target } = await supabaseAdmin
+      .from("profiles").select("email, full_name").eq("id", data.userId).maybeSingle();
+    const { data: role } = await supabaseAdmin
+      .from("user_roles").select("role").eq("user_id", data.userId).maybeSingle();
+    if (role?.role !== "super_admin") throw new Error("This account is not a super administrator.");
+    const { data: existing } = await supabaseAdmin
+      .from("pending_changes").select("id")
+      .eq("table_name", "user_roles").eq("record_id", data.userId).eq("status", "pending").limit(1);
+    if (existing?.length) throw new Error("A demotion request for this account is already pending.");
+    const name = target?.full_name || target?.email || "administrator";
+    const { error } = await context.supabase.from("pending_changes").insert({
+      table_name: "user_roles",
+      action: "update",
+      record_id: data.userId,
+      payload: { role: "admin", email: target?.email ?? null },
+      summary: `Demote ${name} to administrator`,
+      submitted_by: context.userId,
+      submitted_email: (context.claims as { email?: string }).email ?? null,
+    });
+    if (error) throw new Error("Could not submit the request.");
+    await supabaseAdmin.from("audit_logs").insert({
+      user_id: context.userId, action: "request demotion", entity_type: "administrator", entity_id: data.userId,
+    });
+    return { ok: true };
+  });
+
+export const approveSuperAdminDemotion = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { changeId: string }) => {
+    if (!/^[0-9a-f-]{36}$/i.test(input.changeId ?? "")) throw new Error("Missing request.");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    if (!(await callerIsSuperAdmin(context.supabase)))
+      throw new Error("Only super administrators can do this.");
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: change } = await supabaseAdmin
+      .from("pending_changes").select("table_name, record_id, status, submitted_by")
+      .eq("id", data.changeId).maybeSingle();
+    if (!change || change.table_name !== "user_roles" || change.status !== "pending" || !change.record_id)
+      throw new Error("This request is no longer pending.");
+    if (change.submitted_by === context.userId) throw new Error("You cannot approve your own request.");
+    await assertNotOwner(change.record_id);
+    const { error: reviewError } = await context.supabase.rpc("review_change", {
+      _id: data.changeId, _decision: "approved",
+    });
+    if (reviewError) throw new Error(reviewError.message);
+    await supabaseAdmin.from("super_admin_trials").delete().eq("user_id", change.record_id);
+    await supabaseAdmin.from("user_roles").delete().eq("user_id", change.record_id);
+    const { error } = await supabaseAdmin
+      .from("user_roles").insert({ user_id: change.record_id, role: "admin" });
+    if (error) throw new Error(error.message);
+    await supabaseAdmin.from("audit_logs").insert({
+      user_id: context.userId, action: "approve demotion", entity_type: "administrator", entity_id: change.record_id,
     });
     return { ok: true };
   });

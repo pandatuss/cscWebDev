@@ -42,6 +42,7 @@ export const SECTION: Record<ChangeTable, string> = {
   events: "Events",
   transparency_documents: "Transparency",
   organization_settings: "Page content / Org info",
+  user_roles: "Administrator role",
 };
 
 const STATUS: Record<ChangeStatus, { label: string; className: string }> = {

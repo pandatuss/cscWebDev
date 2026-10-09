@@ -11,10 +11,10 @@ const LOADING_LINES: { at: number; text: string }[] = [
   { at: 72, text: "Almost there. Probably." },
 ];
 
-const READY_LINE = "Go be awesome!";
+const READY_LINE = "Ready. Go be awesome!";
 
 function lineForProgress(progress: number) {
-  let line = LOADING_LINES[0].text;
+  let line = LOADING_LINES[0]?.text ?? "";
   for (const entry of LOADING_LINES) {
     if (progress >= entry.at) line = entry.text;
   }

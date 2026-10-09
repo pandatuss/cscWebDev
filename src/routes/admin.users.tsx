@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Plus, ShieldCheck, UserX, UserCheck, Timer, TimerOff, Trash2 } from "lucide-react";
+import { Plus, ShieldCheck, ShieldOff, UserX, UserCheck, Timer, TimerOff, Trash2 } from "lucide-react";
 import { AdminShell } from "@/components/admin/admin-shell";
 import { ConfirmAction, TippedButton } from "@/components/admin/controls";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +27,7 @@ import {
 import {
   createAdminUser,
   deleteAdminUser,
+  requestSuperAdminDemotion,
   endSuperAdminTrial,
   grantSuperAdminTrial,
   listAdminUsers,
@@ -124,6 +125,15 @@ function AdminUsers() {
     }
   }
 
+  async function requestDemotion(userId: string) {
+    try {
+      await requestSuperAdminDemotion({ data: { userId } });
+      toast.success("Demotion request sent to Pending Approval.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not send the request.");
+    }
+  }
+
   async function remove(userId: string) {
     try {
       await deleteAdminUser({ data: { userId } });
@@ -191,7 +201,12 @@ function AdminUsers() {
                     {row.disabled ? "Disabled" : "Active"}
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex justify-end gap-1">
+                    {row.isOwner ? (
+                      <div className="flex justify-end">
+                        <Badge variant="outline">Website owner</Badge>
+                      </div>
+                    ) : null}
+                    <div className="flex justify-end gap-1" hidden={row.isOwner}>
                       {row.role === "admin" && !row.trialUntil ? (
                         <TippedButton
                           label="Give super admin trial"
@@ -229,6 +244,20 @@ function AdminUsers() {
                           trigger={
                             <Button variant="ghost" size="icon" aria-label="Promote">
                               <ShieldCheck className="size-4" />
+                            </Button>
+                          }
+                        />
+                      ) : null}
+                      {row.role === "super_admin" && !row.isSelf ? (
+                        <ConfirmAction
+                          tipLabel="Demote to administrator"
+                          title="Request demotion to administrator?"
+                          description="Another super administrator must approve this in Pending Approval before it takes effect."
+                          confirmLabel="Send for approval"
+                          onConfirm={() => requestDemotion(row.userId)}
+                          trigger={
+                            <Button variant="ghost" size="icon" aria-label="Demote">
+                              <ShieldOff className="size-4" />
                             </Button>
                           }
                         />

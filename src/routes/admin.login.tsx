@@ -35,6 +35,7 @@ function AdminLogin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
+  const [setupKey, setSetupKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,7 +91,7 @@ function AdminLogin() {
     setBusy(true);
     try {
       await bootstrapFirstAdmin({
-        data: { email: email.trim(), password, fullName: fullName.trim() || "Administrator" },
+        data: { email: email.trim(), password, fullName: fullName.trim() || "Administrator", setupKey },
       });
       toast.success("Super administrator created. You can sign in now.");
       await setup.refetch();
@@ -116,16 +117,30 @@ function AdminLogin() {
 
         <form onSubmit={needsSetup ? handleSetup : handleSignIn} className="mt-8 space-y-4">
           {needsSetup ? (
-            <div>
-              <Label htmlFor="fullName">Full name</Label>
-              <Input
-                id="fullName"
-                value={fullName}
-                onChange={(event) => setFullName(event.target.value)}
-                className="mt-1.5"
-                required
-              />
-            </div>
+            <>
+              <div>
+                <Label htmlFor="setupKey">Setup key</Label>
+                <Input
+                  id="setupKey"
+                  type="password"
+                  autoComplete="off"
+                  value={setupKey}
+                  onChange={(event) => setSetupKey(event.target.value)}
+                  className="mt-1.5"
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="fullName">Full name</Label>
+                <Input
+                  id="fullName"
+                  value={fullName}
+                  onChange={(event) => setFullName(event.target.value)}
+                  className="mt-1.5"
+                  required
+                />
+              </div>
+            </>
           ) : null}
           <div>
             <Label htmlFor="email">Email address</Label>
