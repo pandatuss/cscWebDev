@@ -1,7 +1,7 @@
 import { safeUrl } from "@/lib/safe-url";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Mail, MapPin, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,22 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PublicShell, PageHeader } from "@/components/site/public-shell";
 import { settingsQuery } from "@/lib/queries";
-import { supabase } from "@/integrations/supabase/client";
+import { submitContactMessage } from "@/lib/contact.functions";
+
+const TURNSTILE_SITE_KEY = "0x4AAAAAAFR4fA2j2LxMlXNm";
+
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (
+        element: HTMLElement,
+        options: { sitekey: string; callback: (token: string) => void; "expired-callback"?: () => void },
+      ) => string;
+      reset: (widgetId: string) => void;
+    };
+    onTurnstileLoad?: () => void;
+  }
+}
 
 export const Route = createFileRoute("/contact")({
   head: () => ({
@@ -29,6 +44,13 @@ export const Route = createFileRoute("/contact")({
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
+    scripts: [
+      {
+        src: "https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad&render=explicit",
+        async: true,
+        defer: true,
+      },
+    ],
   }),
   component: ContactPage,
 });
@@ -40,6 +62,25 @@ function ContactPage() {
   const [startedAt] = useState(() => Date.now());
   const [sending, setSending] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const turnstileRef = useRef<HTMLDivElement>(null);
+  const widgetIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const render = () => {
+      if (!turnstileRef.current || !window.turnstile || widgetIdRef.current) return;
+      widgetIdRef.current = window.turnstile.render(turnstileRef.current, {
+        sitekey: TURNSTILE_SITE_KEY,
+        callback: (token) => setTurnstileToken(token),
+        "expired-callback": () => setTurnstileToken(""),
+      });
+    };
+    window.onTurnstileLoad = render;
+    render();
+    return () => {
+      if (window.onTurnstileLoad === render) delete window.onTurnstileLoad;
+    };
+  }, []);
 
   const socials = (settings?.social_links ?? {}) as Record<string, string>;
 
@@ -64,21 +105,35 @@ function ContactPage() {
       return;
     }
 
-    setSending(true);
-    const { error } = await supabase.from("contact_messages").insert({
-      name: form.name.trim(),
-      email: form.email.trim(),
-      subject: form.subject.trim(),
-      message: form.message.trim(),
-    });
-    setSending(false);
+    if (!turnstileToken) {
+      toast.error("Please complete the security check before sending.");
+      return;
+    }
 
-    if (error) {
+    setSending(true);
+    try {
+      await submitContactMessage({
+        data: {
+          name: form.name.trim(),
+          email: form.email.trim(),
+          subject: form.subject.trim(),
+          message: form.message.trim(),
+          turnstileToken,
+        },
+      });
+    } catch {
+      setSending(false);
+      setTurnstileToken("");
+      if (widgetIdRef.current && window.turnstile) window.turnstile.reset(widgetIdRef.current);
       toast.error("We couldn't send your message. Please try again.");
       return;
     }
+    setSending(false);
+
     toast.success("Thank you! Your message has been sent.");
     setForm({ name: "", email: "", subject: "", message: "" });
+    setTurnstileToken("");
+    if (widgetIdRef.current && window.turnstile) window.turnstile.reset(widgetIdRef.current);
   }
 
   return (
@@ -228,7 +283,9 @@ function ContactPage() {
             />
           </div>
 
-          <Button type="submit" size="lg" className="mt-6" disabled={sending}>
+          <div ref={turnstileRef} className="mt-6" />
+
+          <Button type="submit" size="lg" className="mt-6" disabled={sending || !turnstileToken}>
             {sending ? "Sending…" : "Send message"}
           </Button>
         </form>
